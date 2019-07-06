@@ -451,6 +451,14 @@ typedef struct playerTeamState_s {
 #define	FOLLOW_ACTIVE1	-1
 #define	FOLLOW_ACTIVE2	-2
 
+#define MAX_USERNAME_LENGTH 15
+#define MAX_PASSWORD_LENGTH 15
+#define	MAX_USER_FILE_LENGTH 1024
+
+#define MAX_OBINFO_FILE_LENGTH 1024
+#define MAX_IPSTRING        26
+#define DEFAULT_ARM_LENGTH         100
+
 // client data that stays across multiple levels or tournament restarts
 // this is achieved by writing all the data to cvar strings at game shutdown
 // time and reading them back at connection time.  Anything added here
@@ -469,6 +477,16 @@ typedef struct clientSession_s {
 	char		siegeClass[64];
 	int			duelTeam;
 	int			siegeDesiredTeam;
+	int			permissions;
+	int			arm;
+	int			makerModFlags;
+	int			totalTime; 
+	char		username[MAX_USERNAME_LENGTH + 1];
+	char		password[MAX_PASSWORD_LENGTH + 1];
+	vec3_t		mark;
+	char		objectPassword[MAX_PASSWORD_LENGTH + 1];
+	int			touchTimer;
+	int			teleTimer;
 
 	char		IP[NET_ADDRSTRMAXLEN];
 } clientSession_t;

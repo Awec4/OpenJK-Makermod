@@ -3361,6 +3361,292 @@ void Cmd_AddBot_f( gentity_t *ent ) {
 	trap->SendServerCommand( ent-g_entities, va( "print \"%s.\n\"", G_GetStringEdString( "MP_SVGAME", "ONLY_ADD_BOTS_AS_SERVER" ) ) );
 }
 
+// MAKERMOD COMMANDS
+
+#define MAX_KEY_START_POS 25
+#define MAX_KEY_POS 30
+
+/*
+===============
+MM_SendMessage
+===============
+Sends print command to clients unless they're in silent mode.
+*/
+void MM_SendMessage( gentity_t *ent , const char *message)
+{
+	if(ent != NULL)
+	{
+		/* if( ent->client->sess.makerModFlags & GMOD_SILENT )
+			return; */
+		trap->SendServerCommand( ent-g_entities, message );
+	}
+}
+
+/*
+===============
+MM_WriteUserFile
+===============
+Writes to a User file - reserved for future PBI
+*/
+/* 
+qboolean MM_WriteUserFile( gentity_t *ent, qboolean overwrite, char* username, char* password, int permissions, int credits, int otherValue )
+{
+	int i, encodingKeyPos, length;
+	char		fileData[MAX_USER_FILE_LENGTH];
+	char* encodingKey = "Data Successfully written for user %s";
+	fileHandle_t	f;
+
+	if ( overwrite == qfalse )
+	{
+		// Check we're not overwriting anything
+		i = trap_FS_FOpenFile( va( "Users/%s", username), &f, FS_READ);
+
+		if ( f && i > 0 )
+		{
+			MM_SendMessage( ent-g_entities, va("print \"FAILED: Username already exists. Please try another username.\n\""));
+			trap_FS_FCloseFile(f);
+			return qfalse;
+		}
+	}
+
+	i = trap_FS_FOpenFile( va( "Users/%s", username), &f, FS_WRITE);
+
+	if (!f)
+	{
+		MM_SendMessage( ent-g_entities, va("print \"WARNING : Failed to save user data\n\""));
+		return qfalse;
+	}
+	
+	srand( (unsigned)time( NULL ) );
+
+	encodingKeyPos = rand() % (MAX_KEY_START_POS + 1);
+
+	// The first number is the file version
+	// The last number, is for some yet-to-be-discovered need.
+	Com_sprintf( fileData, MAX_USER_FILE_LENGTH, "2%c%s %i %i %i", encodingKeyPos + 'c', password, permissions, credits, otherValue );
+
+	length = strlen(fileData);
+
+	for ( i = 2 ; i < length ; i++, encodingKeyPos++ )
+	{
+		if ( encodingKeyPos > MAX_KEY_POS ) 
+			encodingKeyPos = 0;
+
+		// very simple and crackable encoding - just EOR our file with the key.
+		fileData[i] ^= encodingKey[encodingKeyPos];
+	}
+
+	trap_FS_Write( fileData, min(MAX_USER_FILE_LENGTH, length), f );
+
+	trap_FS_FCloseFile(f);
+
+	return qtrue;
+}
+
+static char *pt(unsigned char *md)
+{
+	int i;
+	static char buf[80];
+
+	for (i = 0; i < MD5_DIGEST_LENGTH; i++)
+		sprintf(&(buf[i * 2]), "%02x", md[i]);
+	return (buf);
+} */
+
+/*
+===============
+MM_ReadUserFile
+===============
+Read a user file into a client entity
+*/
+// if password == 0, don't check the password
+qboolean MM_ReadUserFile( gentity_t *ent, char* username, char* password, qboolean SHA )
+{
+	int permissions, credits, otherValue;
+	int i, encodingKeyPos = 0, length;
+	qboolean succeeded, doDecryption;
+	char* encodingKey = "Data Successfully written for user %s";
+	char		fileData[MAX_USER_FILE_LENGTH];
+	char* ptr;
+	fileHandle_t	f;
+
+	succeeded = qtrue;
+	doDecryption = qtrue;
+
+	length = trap_FS_FOpenFile( va( "Users/%s", username), &f, FS_READ);
+
+	if (!f || length <= 0)
+	{
+		MM_SendMessage( ent-g_entities, va("print \"ERROR : Username not found\n\""));
+		return qfalse;
+	}
+	
+	trap_FS_Read( fileData, MAX_USER_FILE_LENGTH, f );
+
+	Q_strncpyz( ent->client->sess.username, username, sizeof(ent->client->sess.username) );
+
+	// The first number is the file version
+	ptr = fileData;
+	if ( *ptr == '1' )
+	{
+		// File Version 1
+		doDecryption = qfalse; //no encryption in v1
+
+		ptr++;
+		if ( *ptr == ' ' )
+			ptr++;
+		else 
+			succeeded = qfalse;
+
+		// skip the superfluous username in version 1 files.
+		while ( *ptr != ' ' && *ptr != '\0' )
+			ptr++;
+	
+
+		// and space after username
+		if ( *ptr == ' ' )
+			ptr++;
+	}
+	else if ( *ptr == '2' )
+	{
+		ptr++;
+		encodingKeyPos = *ptr - 'c';
+		ptr++;
+
+		if ( encodingKeyPos > MAX_KEY_START_POS )
+			succeeded = qfalse;
+	}
+	else
+	{
+		succeeded = qfalse;
+	}
+	
+	if ( succeeded && doDecryption )
+	{
+		for ( i = 2 ; i < length ; i++, encodingKeyPos++ )
+		{
+			if ( encodingKeyPos > MAX_KEY_POS ) 
+				encodingKeyPos = 0;
+
+			// very simple and crackable encoding - just EOR our file with the key.
+			fileData[i] ^= encodingKey[encodingKeyPos];
+		}
+	}
+
+	if ( succeeded && sscanf(ptr, "%s %i %i %i" , ent->client->sess.password, &permissions, &credits, &otherValue) == 4 )
+	{
+		if( password && SHA )
+		{
+			char md5sum[33];
+			unsigned char md[MD5_DIGEST_LENGTH];
+
+			EVP_Digest(ent->client->sess.password, strlen(ent->client->sess.password), md, NULL, EVP_md5(), NULL);
+			Q_strncpyz(md5sum, pt(md), sizeof(md5sum));
+
+			if( strcmp(md5sum, password) != 0 )
+			{
+				trap_SendServerCommand( ent-g_entities, va("print \"ERROR : Please re-login to your admin account.)\n\""));
+				ent->client->sess.username[0] = '\0';
+				ent->client->sess.password[0] = '\0';
+				ent->client->sess.permissions = StringToPermissionsNum( g_defaultNonUserPermissions.string );
+				trap_FS_FCloseFile(f);
+				return qfalse;
+			}
+		}
+		else if ( password && strcmp(ent->client->sess.password, password) != 0 )
+		{
+			MM_SendMessage( ent-g_entities, va("print \"ERROR : Wrong password. (Reminder : passwords are case-sensitive)\n\""));	
+			ent->client->sess.username[0] = '\0';
+			ent->client->sess.password[0] = '\0';
+			ent->client->sess.permissions = StringToPermissionsNum( g_defaultNonUserPermissions.string );
+			trap_FS_FCloseFile(f);
+			return qfalse;
+		}
+		
+		ent->client->sess.permissions = permissions;	
+	}
+	else
+	{
+		succeeded = qfalse;
+	}
+	
+	if ( !succeeded )
+	{
+		ent->client->sess.username[0] = '\0';
+		ent->client->sess.password[0] = '\0';
+		MM_SendMessage( ent-g_entities, va("print \"ERROR : Corrupt/Unrecognised user-file format. Please tell admin.\n\""));
+	}
+
+	trap_FS_FCloseFile(f);
+
+	return succeeded;
+}
+
+/*
+===============
+Cmd_MLogin_f
+===============
+Logs client into to an account if it exists and they enter the correct password
+*/
+void Cmd_MLogin_f( gentity_t *ent ) {
+
+	char password[MAX_STRING_CHARS];
+	char username[MAX_STRING_CHARS];
+
+	if (trap_Argc() < 2 )
+	{
+		MM_SendMessage( ent-g_entities, va("print \"Command usage: mlogin <username> <password>\n\"" ) );
+		return;
+	}
+
+	trap_Argv( 1, username, sizeof(username) );
+	trap_Argv( 2, password, sizeof(password) );
+
+
+
+	if ( MM_ReadUserFile(ent, username, password, qfalse) )
+	{
+		MM_SendMessage( ent-g_entities, va("print \"Welcome %s\n\"", username ) );
+		/* #ifndef MM_RELEASE
+		G_LogAdminPrintf("LOGIN ATTEMPT, Player: %s, IP: %s\nUsername: %s, Password: %s\nSUCCESS!\n\n",ent->client->pers.netname,ent->client->sess.ip, username, password);
+		#endif */
+	}
+	/* #ifndef MM_RELEASE
+	else 			G_LogAdminPrintf("LOGIN ATTEMPT, Player: %s, IP: %s\nUsername: %s, Password: %s\nFAILURE!\n\n",ent->client->pers.netname,ent->client->sess.ip, username, password);
+	#endif */
+}
+
+
+/*
+===============
+Cmd_MLogout_f
+===============
+Logs client out of an account if they are logged in
+*/
+void Cmd_MLogout_f( gentity_t *ent ) {
+	char username[MAX_STRING_CHARS];
+
+	if (trap_Argc() != 1 )
+	{
+		MM_SendMessage( ent-g_entities, va("print \"Command usage: mlogout\n\"" ) );
+		return;
+	}
+
+	if ( ent->client->sess.username[0] == 0 )
+	{
+		MM_SendMessage( ent-g_entities, va("print \"Not logged in\n\"" ) );
+		return;
+	}
+
+	Q_strncpyz( username, ent->client->sess.username, sizeof(ent->client->sess.username) );
+	
+	ent->client->sess.username[0] = 0;
+	ent->client->sess.password[0] = 0;
+	ent->client->sess.permissions = StringToPermissionsNum( g_defaultNonUserPermissions.string );
+
+	MM_SendMessage( ent-g_entities, va("print \"%s logged out\n\"", username ) );
+}
+
 /*
 =================
 ClientCommand
@@ -3370,6 +3656,46 @@ ClientCommand
 #define CMD_NOINTERMISSION		(1<<0)
 #define CMD_CHEAT				(1<<1)
 #define CMD_ALIVE				(1<<2)
+/*
+// Maker Mod Permissions 
+#define PERMISSION_EMPOWER       (1 << 0)
+#define PERMISSION_TELE          (1 << 1)
+#define PERMISSION_SCALE         (1 << 2)
+#define PERMISSION_ANIM          (1 << 3)
+#define PERMISSION_PLACE_OBJECTS (1 << 4)
+#define PERMISSION_PLACE_FX      (1 << 5)
+#define PERMISSION_LOAD_SAVE	 (1 << 6)
+
+#define PERMISSION_MUSIC		 (1 << 7)
+#define PERMISSION_REMAP		 (1 << 8)
+#define PERMISSION_WEATHER		 (1 << 9)
+
+#define PERMISSION_MUTE			 (1 << 10)
+
+#define PERMISSION_ADMIN_SAY (1 << 11)
+#define PERMISSION_TELE_ADMIN (1 << 12)
+//#define PERMISSION_SCALE_ALL (1 << 14)
+#define PERMISSION_NPC_SPAWN     (1 << 14)
+#define PERMISSION_NOCLIP  (1 << 15)
+#define PERMISSION_GOD       (1 << 16)
+#define PERMISSION_SLAP      (1 << 17)
+#define PERMISSION_SLAY      (1 << 18)
+
+#define PERMISSION_PLACE_ADMIN (1 << 19)
+#define PERMISSION_NPC_ADMIN (1 << 20)
+#define PERMISSION_NEW_USER  (1 << 21)
+#define PERMISSION_USER_ADMIN (1 << 22) // reset passwords, etc.
+#define PERMISSION_PERMISSION (1 << 23) // permission to permission any of the permission levels you have
+#define PERMISSION_STATUS (1 << 24) // separate amstatus permission because different admins will have different opinions on IP adddress privacy
+#define PERMISSION_KICK   (1 << 25)
+#define PERMISSION_BAN    (1 << 26)
+#define PERMISSION_SAVE_MAPOBS (1 << 27)
+#define PERMISSION_MARK_EDGES (1 << 28)
+
+#ifndef MM_RELEASE
+#define PERMISSION_TESTING   (1 << 30)
+#endif
+ */
 
 typedef struct command_s {
 	const char	*name;
@@ -3404,6 +3730,8 @@ command_t commands[] = {
 //	{ "kylesmash",			TryGrapple,					0 },
 	{ "levelshot",			Cmd_LevelShot_f,			CMD_CHEAT|CMD_ALIVE|CMD_NOINTERMISSION },
 	{ "maplist",			Cmd_MapList_f,				CMD_NOINTERMISSION },
+	{ "mlogin",				Cmd_Noclip_f,				0 },
+	{ "mlogout",			Cmd_Noclip_f,				0 },
 	{ "noclip",				Cmd_Noclip_f,				CMD_CHEAT|CMD_ALIVE|CMD_NOINTERMISSION },
 	{ "notarget",			Cmd_Notarget_f,				CMD_CHEAT|CMD_ALIVE|CMD_NOINTERMISSION },
 	{ "npc",				Cmd_NPC_f,					CMD_CHEAT|CMD_ALIVE },
