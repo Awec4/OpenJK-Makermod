@@ -649,6 +649,47 @@ void CG_DrawHealth( menuDef_t *menuHUD )
 
 /*
 ================
+MM_DrawSpeed [Spinmod] [Makermod]
+================
+*/
+void MM_DrawSpeed( menuDef_t *menuHUD, centity_t *cent )
+{
+	int speed;
+	itemDef_t		*focusItem;
+
+	// Can we find the menu?
+	if (!menuHUD)
+	{
+		return;
+	}
+
+	if (mm_drawSpeed.integer)
+	{
+		focusItem = Menu_FindItemByName(menuHUD, "speedamount");
+		if (focusItem)
+		{
+	
+			speed = sqrt( cent->currentState.pos.trDelta[0] * cent->currentState.pos.trDelta[0] + cent->currentState.pos.trDelta[1] * cent->currentState.pos.trDelta[1] );
+	
+			// Print health amount
+			trap->R_SetColor( focusItem->window.foreColor );
+	
+			CG_DrawNumField (
+				focusItem->window.rect.x, 
+				focusItem->window.rect.y, 
+				5,
+				speed, 
+				focusItem->window.rect.w, 
+				focusItem->window.rect.h, 
+				NUM_FONT_SMALL,
+				qfalse);
+		}
+	}
+	return;
+}
+
+/*
+================
 CG_DrawArmor
 ================
 */
@@ -1392,6 +1433,7 @@ void CG_DrawHUD(centity_t	*cent)
 
 			CG_DrawArmor(menuHUD);
 			CG_DrawHealth(menuHUD);
+			MM_DrawSpeed(menuHUD,cent);	//Makermod - Spinmod
 		}
 		else
 		{
